@@ -1,0 +1,60 @@
+name: Build TrollStore IPA
+
+on:
+  push:
+    branches: [codex/iphone-tablet-test]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+      - name: Generate project
+        env:
+          CI_PRIMARY_REPOSITORY_PATH: ${{ github.workspace }}
+          HOMEBREW_NO_AUTO_UPDATE: 1
+        run: |
+          set -euo pipefail
+          xcodebuild -version
+          bash ci_scripts/ci_post_clone.sh
+      - name: Build for iPhone
+        run: |
+          set -euo pipefail
+          xcodebuild -project BTRemote.xcodeproj -scheme BTRemote \
+            -configuration Release -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath .build/DerivedData \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
+            PRODUCT_BUNDLE_IDENTIFIER=io.github.r4shb0ss.btremote build \
+            > build.log 2>&1 || { tail -n 180 build.log; exit 1; }
+      - name: Package for TrollStore
+        run: |
+          set -euo pipefail
+          mkdir -p .build/Payload artifacts
+          cp -R .build/DerivedData/Build/Products/Release-iphoneos/BTRemote.app .build/Payload/
+          codesign --force --sign - .build/Payload/BTRemote.app
+          cd .build
+          /usr/bin/zip -qry ../artifacts/BTRemote-TrollStore.ipa Payload
+          cd ..
+          shasum -a 256 artifacts/BTRemote-TrollStore.ipa > artifacts/SHA256SUMS.txt
+          git rev-parse HEAD > artifacts/SOURCE_COMMIT.txt
+          xcodebuild -version > artifacts/XCODE_VERSION.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: btremote-trollstore
+          path: artifacts/
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: build-log
+          path: build.log
+          if-no-files-found: ignore
